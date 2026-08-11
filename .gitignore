@@ -1,0 +1,3 @@
+axiom-agent-daemon
+*.exe
+test-config-dir/
