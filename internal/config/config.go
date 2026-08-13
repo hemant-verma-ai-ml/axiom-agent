@@ -2,8 +2,8 @@
 // daemon and the GUI (ADR-017 §3) — one source of truth for watched paths,
 // not two configs that can drift apart.
 //
-// UNVERIFIED: written 2026-08-10, not compiled or tested. Real `go build`
-// and `go vet` must run on i5 before this is treated as working code.
+// Verified: `go build ./...` and `go vet ./...` pass clean as of AXIOM-S9
+// (2026-08-13), module-wide, including this file.
 package config
 
 import (
