@@ -21,6 +21,7 @@ package main
 
 import (
 	"log"
+	"os"
 	"os/signal"
 	"syscall"
 
@@ -64,6 +65,24 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	// SIGHUP triggers a live config reload (AXIOM-S10): the GUI's
+	// "add to watch list" feature (ADR-017 SS3) persists a new path to
+	// config.json, then this signal tells an already-running daemon to
+	// pick it up without a restart. Only ADDED paths take effect live --
+	// a path REMOVED from config still needs a restart, since nothing in
+	// internal/watcher calls fsw.Remove (named limitation, not solved
+	// here). Runs on its own goroutine; Reload() only sends a channel
+	// signal, never touches watcher state directly, so this is safe
+	// concurrent with w.Run's own goroutine.
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	go func() {
+		for range hup {
+			log.Println("axiom-agent: SIGHUP received, reloading config")
+			w.Reload()
+		}
+	}()
 
 	log.Println("axiom-agent: daemon started")
 	if err := w.Run(ctx.Done()); err != nil {

@@ -17,9 +17,9 @@
 // rather than maintaining a guessed, always-incomplete hardcoded list of
 // "common" directories to skip.
 //
-// UNVERIFIED beyond compilation checks already run this session on the
-// prior version — this revision (gitignore-aware exclusion) has not yet
-// been built or vetted on i5. Real `go build` and `go vet` still needed.
+// Verified: `go build ./...` and `go vet ./...` pass clean module-wide
+// as of AXIOM-S10 (2026-08-17), including this file's gitignore-aware
+// exclusion logic.
 package watcher
 
 import (
@@ -56,6 +56,19 @@ type Watcher struct {
 	// `pending`, which is also touched from debounce timer callbacks on
 	// their own goroutines.
 	ignoredDirs map[string]map[string]bool
+
+	// reload receives a signal (sent by Reload(), called from main.go's
+	// SIGHUP handler) telling Run's select loop to re-read config.json
+	// from disk and start watching any newly-added paths. Buffered size
+	// 1: a signal sent while a reload is already pending is dropped
+	// rather than blocking the sender. A coalesced extra reload is
+	// harmless -- addRecursive on an already-watched root is a safe
+	// no-op, the same property runReconciliation already relies on
+	// every 10 minutes. Only ADDED paths are picked up live; a path
+	// REMOVED from config still requires a restart, since nothing in
+	// this package calls fsw.Remove (same real, named limitation
+	// shouldSkip's doc comment already states for the gitignore case).
+	reload chan struct{}
 }
 
 func New(cfg config.Config, trigger TriggerFunc) (*Watcher, error) {
@@ -69,7 +82,22 @@ func New(cfg config.Config, trigger TriggerFunc) (*Watcher, error) {
 		fsw:         fsw,
 		pending:     make(map[string]*time.Timer),
 		ignoredDirs: make(map[string]map[string]bool),
+		reload:      make(chan struct{}, 1),
 	}, nil
+}
+
+// Reload sends a non-blocking signal telling Run's select loop to re-read
+// config.json and start watching any newly-added paths. Safe to call from
+// any goroutine (e.g. a SIGHUP handler) -- never touches watcher state
+// directly, only notifies Run's own goroutine to do so, preserving the
+// single-goroutine invariant addRecursive/handleEvent/runReconciliation
+// already depend on.
+func (w *Watcher) Reload() {
+	select {
+	case w.reload <- struct{}{}:
+	default:
+		// A reload is already pending; this one is redundant.
+	}
 }
 
 // Run blocks until stop is closed. It starts the native watch on every
@@ -108,7 +136,41 @@ func (w *Watcher) Run(stop <-chan struct{}) error {
 
 		case <-reconcile.C:
 			w.runReconciliation()
+
+		case <-w.reload:
+			w.reloadConfig()
 		}
+	}
+}
+
+// reloadConfig re-reads config.json from disk and starts watching any
+// paths present in the fresh config but not yet in w.cfg.WatchPaths.
+// Runs only from Run's own goroutine (the reload channel case), so it
+// shares the same single-goroutine safety as addRecursive/handleEvent --
+// no mutex needed here either, consistent with ignoredDirs' documented
+// invariant above.
+func (w *Watcher) reloadConfig() {
+	fresh, err := config.Load()
+	if err != nil {
+		log.Printf("watcher: reload failed to load config: %v", err)
+		return
+	}
+
+	existing := make(map[string]bool, len(w.cfg.WatchPaths))
+	for _, p := range w.cfg.WatchPaths {
+		existing[p] = true
+	}
+
+	for _, root := range fresh.WatchPaths {
+		if existing[root] {
+			continue
+		}
+		log.Printf("watcher: reload picked up new watch path %s", root)
+		if err := w.addRecursive(root); err != nil {
+			log.Printf("watcher: reload failed to watch %s: %v", root, err)
+			continue
+		}
+		w.cfg.WatchPaths = append(w.cfg.WatchPaths, root)
 	}
 }
 
