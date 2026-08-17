@@ -10,11 +10,17 @@
 // ADR-017 SS1: "no duplicated extraction logic." This file only builds
 // UI around the same Run() call the daemon's watcher closure calls.
 //
+// AXIOM-S10: ADR-017 SS3's default confirmed by Hemant -- every folder
+// submitted here is automatically added to the daemon's persistent watch
+// list (config.AddWatchPath), not just processed once. If the daemon is
+// already running, it picks up the new path live via the SIGHUP reload
+// mechanism added this session in internal/watcher -- no restart needed.
+// No opt-out UI exists yet (every submission auto-adds unconditionally);
+// a "run once, don't watch" checkbox would be the real follow-up if that
+// default ever needs overriding per-submission.
+//
 // NOT YET implemented, named as real gaps rather than silently stubbed:
 //   - Drag-and-drop (ADR-017 SS2's other input path)
-//   - "Also add to daemon watch list" checkbox (ADR-017 SS3's proposed
-//     default -- not yet independently confirmed, and this GUI has no
-//     access to config.Config yet to implement it even if confirmed)
 //   - Credential loading UI (ADR-021 amended) -- this version still
 //     relies on the same AXIOM_AGENT_API_KEY / AXIOM_AGENT_SERVER_URL
 //     env-var bridge as the daemon, not a real first-run "paste your
@@ -30,6 +36,7 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/hemant-verma-ai-ml/axiom-agent/internal/config"
 	"github.com/hemant-verma-ai-ml/axiom-agent/internal/extractor"
 )
 
@@ -92,6 +99,25 @@ func main() {
 				res.Upload.CodeFileNodesInserted, res.Upload.CodeFileNodesTotal,
 			)
 		}
+
+		// AXIOM-S10, ADR-017 SS3 (confirmed): auto-add this folder to the
+		// daemon's persistent watch list. Real, honest limitation: this
+		// updates config.json regardless of whether the daemon is
+		// currently running. If it is running, SIGHUP (sent separately,
+		// e.g. by an installer/tray action -- not from inside this GUI
+		// process) makes it pick this up live; this GUI does not send
+		// that signal itself, since it may be running on a machine where
+		// the daemon isn't installed as a service at all yet (Tier 2 #7,
+		// still open).
+		cfg, err := config.Load()
+		if err != nil {
+			msg += fmt.Sprintf("\n(Could not add to watch list: %v)", err)
+		} else if err := config.AddWatchPath(&cfg, selectedPath); err != nil {
+			msg += fmt.Sprintf("\n(Could not add to watch list: %v)", err)
+		} else {
+			msg += "\nAdded to daemon watch list."
+		}
+
 		status.SetText(msg)
 	})
 
