@@ -34,7 +34,7 @@ import (
 )
 
 func main() {
-	a := app.New()
+	a := app.NewWithID("com.ruvelta.axiom-agent-gui")
 	w := a.NewWindow("AXIOM Agent")
 	w.Resize(fyne.NewSize(480, 240))
 
