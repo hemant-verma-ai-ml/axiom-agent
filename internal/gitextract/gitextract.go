@@ -43,8 +43,8 @@ type CommitNode struct {
 // NormalizedWeight = commit_count / max_commit_count_in_repo, same
 // Golden Rule 12 basis cited in the real Python source.
 type ChurnScore struct {
-	FilePath        string
-	CommitCount     int
+	FilePath         string
+	CommitCount      int
 	NormalizedWeight float64
 }
 
