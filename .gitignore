@@ -2,3 +2,4 @@ axiom-agent-daemon
 /axiom-agent-gui
 *.exe
 test-config-dir/
+/migrate-creds

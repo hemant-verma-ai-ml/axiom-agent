@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hemant-verma-ai-ml/axiom-agent/internal/credstore"
 	"github.com/hemant-verma-ai-ml/axiom-agent/internal/gitextract"
 	"github.com/hemant-verma-ai-ml/axiom-agent/internal/uploader"
 )
@@ -41,7 +42,7 @@ type Result struct {
 // internal/uploader.Upload using AXIOM_AGENT_SERVER_URL and
 // AXIOM_AGENT_API_KEY (uploader.RequireEnv) -- a real, temporary
 // credential bridge, not ADR-017 SS4's actual OS-keychain/encrypted-config
-// design (Tier 2 #8, still unbuilt).
+// design -- Tier 2 #8 is now built via internal/credstore, wired in above.
 //
 // commits/files sent to Upload are always real, complete slices from a
 // full scan -- never a partial result. This matters: the upload
@@ -113,7 +114,11 @@ func Run(rootPath string) (Result, error) {
 	if err != nil {
 		return res, fmt.Errorf("upload skipped for %s: %w", rootPath, err)
 	}
-	apiKey, err := uploader.RequireEnv("AXIOM_AGENT_API_KEY")
+	credStore, err := credstore.NewDefaultUserFileStore()
+	if err != nil {
+		return res, fmt.Errorf("upload skipped for %s: credential store unavailable: %w", rootPath, err)
+	}
+	apiKey, err := credStore.Get("AXIOM_AGENT_API_KEY")
 	if err != nil {
 		return res, fmt.Errorf("upload skipped for %s: %w", rootPath, err)
 	}
