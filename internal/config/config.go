@@ -30,6 +30,16 @@ type Config struct {
 	// anything the native watch silently missed (e.g. an exceeded
 	// inotify watch limit). Default per ADR-019: 10.
 	ReconcileMinutes int `json:"reconcile_minutes"`
+
+	// ServerURL is the upload target. Non-secret config, unlike the
+	// API key (Tier 2 #8, internal/credstore) -- lives here rather
+	// than in the encrypted store. AXIOM-S11: added so a standalone
+	// GUI install (no systemd EnvironmentFile= bridge) has a real
+	// place to persist what Settings saves; internal/extractor
+	// prefers AXIOM_AGENT_SERVER_URL from the environment when set
+	// (the daemon's existing, working path) and falls back to this
+	// field otherwise.
+	ServerURL string `json:"server_url,omitempty"`
 }
 
 func Default() Config {

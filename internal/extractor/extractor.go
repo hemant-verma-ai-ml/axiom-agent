@@ -14,10 +14,12 @@ package extractor
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/hemant-verma-ai-ml/axiom-agent/internal/config"
 	"github.com/hemant-verma-ai-ml/axiom-agent/internal/credstore"
 	"github.com/hemant-verma-ai-ml/axiom-agent/internal/gitextract"
 	"github.com/hemant-verma-ai-ml/axiom-agent/internal/uploader"
@@ -55,6 +57,27 @@ type Result struct {
 // (daemon closure, GUI handler) decide how to present failure; Run
 // itself makes no assumption about whether a log line or a dialog is
 // the right response.
+
+// resolveServerURL returns the upload target, preferring
+// AXIOM_AGENT_SERVER_URL from the environment (the daemon's existing,
+// working systemd EnvironmentFile= bridge -- left untouched here to
+// avoid any regression) and falling back to config.json's ServerURL
+// otherwise (Tier 2 #6/#8, AXIOM-S11) -- the path a standalone GUI
+// install with no systemd unit actually uses once Settings saves it.
+func resolveServerURL() (string, error) {
+	if v := os.Getenv("AXIOM_AGENT_SERVER_URL"); v != "" {
+		return v, nil
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return "", fmt.Errorf("config unavailable: %w", err)
+	}
+	if cfg.ServerURL == "" {
+		return "", fmt.Errorf("server URL not set: neither AXIOM_AGENT_SERVER_URL env var nor config.json's server_url (Settings) is configured")
+	}
+	return cfg.ServerURL, nil
+}
+
 func Run(rootPath string) (Result, error) {
 	res := Result{RootPath: rootPath}
 
@@ -110,7 +133,7 @@ func Run(rootPath string) (Result, error) {
 		})
 	}
 
-	serverURL, err := uploader.RequireEnv("AXIOM_AGENT_SERVER_URL")
+	serverURL, err := resolveServerURL()
 	if err != nil {
 		return res, fmt.Errorf("upload skipped for %s: %w", rootPath, err)
 	}
