@@ -1,0 +1,171 @@
+# axiom-agent — release workflow
+#
+# TARGET PATH IN REPO: .github/workflows/release.yml
+#
+# ASSUMPTIONS — VERIFY BEFORE COMMITTING (per golden rules, don't trust blind):
+#   1. Daemon entrypoint:  ./cmd/axiom-agent        (headless, no CGO)
+#   2. GUI entrypoint:     ./cmd/axiom-agent-gui     (Fyne, CGO required)
+#      -> if actual layout differs (e.g. single main.go with a -gui flag,
+#         or cmd/daemon + cmd/gui), fix the `go build ./cmd/...` paths below.
+#   3. Module path: github.com/hemant-verma-ai-ml/axiom-agent
+#   4. go.mod exists at repo root and pins the Go version (workflow reads it
+#      via go-version-file rather than hardcoding a version).
+#   5. Binary output names: axiom-agent (daemon), axiom-agent-gui (GUI) —
+#      matches the macOS bundle id com.ruvelta.axiom-agent-gui noted in the
+#      master prompt.
+#
+# BUILD MATRIX AS REQUESTED (full matrix, Linux stable / macOS+Windows experimental):
+#   - Daemon: cross-compiled from one Ubuntu runner, CGO_ENABLED=0, cheap,
+#     linux/darwin/windows x amd64/arm64. No native runner needed since it's
+#     headless.
+#   - GUI: Fyne needs CGO (OpenGL bindings) -> must build natively on each OS.
+#     linux-amd64 is REQUIRED (fails the workflow if broken).
+#     darwin and windows builds run with continue-on-error: true and are
+#     labeled experimental in the artifact name, since only Linux has
+#     actually been run/tested per the README.
+#
+# No secrets needed — release creation uses the auto-provided GITHUB_TOKEN.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch: {}   # manual trigger for testing before you cut a real tag
+
+permissions:
+  contents: write   # required to create the GitHub Release and upload assets
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Headless daemon: pure Go, no CGO, cheap cross-compile from one runner
+  # ---------------------------------------------------------------------
+  build-daemon:
+    name: daemon (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build daemon binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist
+          EXT=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then EXT=".exe"; fi
+          go build -trimpath -ldflags="-s -w" \
+            -o "dist/axiom-agent-${{ matrix.goos }}-${{ matrix.goarch }}${EXT}" \
+            ./cmd/axiom-agent
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: daemon-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------
+  # Fyne GUI: requires CGO -> native runner per OS. Linux required,
+  # macOS/Windows experimental (continue-on-error, don't block the release).
+  # ---------------------------------------------------------------------
+  build-gui:
+    name: gui (${{ matrix.os_label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            os_label: linux-amd64
+            experimental: false
+          - runner: macos-latest
+            os_label: macos-arm64
+            experimental: true
+          - runner: windows-latest
+            os_label: windows-amd64
+            experimental: true
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.experimental }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Linux: Fyne's X11/OpenGL cgo deps
+      - name: Install Linux GUI build deps
+        if: matrix.runner == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev xorg-dev
+
+      # Windows: cgo needs a real gcc; runner doesn't ship one by default
+      - name: Install Windows mingw gcc
+        if: matrix.runner == 'windows-latest'
+        uses: egor-tensin/setup-mingw@v2
+        with:
+          platform: x64
+
+      # macOS: Xcode command line tools already present on macos-latest runners
+
+      - name: Build GUI binary
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          mkdir -p dist
+          EXT=""
+          if [ "${{ matrix.runner }}" = "windows-latest" ]; then EXT=".exe"; fi
+          go build -trimpath -ldflags="-s -w" \
+            -o "dist/axiom-agent-gui-${{ matrix.os_label }}${EXT}" \
+            ./cmd/axiom-agent-gui
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gui-${{ matrix.os_label }}
+          path: dist/*
+          if-no-files-found: warn   # experimental builds may legitimately fail
+
+  # ---------------------------------------------------------------------
+  # Only runs on an actual tag push (not workflow_dispatch), collects
+  # whatever artifacts succeeded, and creates/updates the GitHub Release.
+  # ---------------------------------------------------------------------
+  release:
+    name: Create release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-daemon, build-gui]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List collected artifacts
+        run: ls -la artifacts/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          fail_on_unmatched_files: false   # experimental builds may be absent
