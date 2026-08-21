@@ -117,7 +117,7 @@ jobs:
         if: matrix.runner == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-dev xorg-dev
+          sudo apt-get install -y libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols
 
       # Windows: cgo needs a real gcc; runner doesn't ship one by default
       - name: Install Windows mingw gcc
