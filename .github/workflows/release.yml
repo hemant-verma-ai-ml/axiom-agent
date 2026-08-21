@@ -125,6 +125,7 @@ jobs:
         uses: egor-tensin/setup-mingw@v2
         with:
           platform: x64
+          version: 8.1.0
 
       # macOS: Xcode command line tools already present on macos-latest runners
 
